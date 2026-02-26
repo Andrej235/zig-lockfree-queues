@@ -1,0 +1,16 @@
+.{
+    .name = .benchmarks,
+    .version = "0.0.1",
+    .minimum_zig_version = "0.15.2",
+    .paths = .{""},
+    .dependencies = .{
+        .core = .{
+            .path = "../core",
+        },
+        .zbench = .{
+            .url = "https://github.com/hendriknielaender/zbench/archive/feaf455d9f8efa7a95b75b52ac3efe0c52549691.tar.gz",
+            .hash = "zbench-0.11.1-YTdc7zkmAQBWI99esNFueJc9GuzK-KaU6Nfr1ZXhNGmc",
+        },
+    },
+    .fingerprint = 0x41bc1c584746cf0a,
+}

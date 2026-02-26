@@ -5,4 +5,5 @@ test {
 
 pub const SPMC = struct {
     pub const Mutex = @import("spmc/mutex_spmc.zig").Queue;
+    pub const Atomic = @import("spmc/atomic_spmc.zig").Queue;
 };

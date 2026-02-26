@@ -15,10 +15,16 @@ pub fn Queue(comptime T: type) type {
         tail: usize = 0,
         count: usize = 0,
 
-        pub fn init(buffer: []T) Self {
+        pub fn init(allocator: std.mem.Allocator, count: usize) !Self {
+            const buffer = try allocator.alloc(T, count);
+
             return Self{
                 .buf = buffer,
             };
+        }
+
+        pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+            allocator.free(self.buf);
         }
 
         pub fn tryEnqueue(self: *Self, item: T) QueueErrors!void {
@@ -80,8 +86,8 @@ pub fn Queue(comptime T: type) type {
 const testing = std.testing;
 
 test "single threaded" {
-    var buffer = [_]u32{0} ** 4;
-    var queue = Queue(u32).init(buffer[0..]);
+    var queue = Queue(u32).init(std.heap.page_allocator, 4) catch unreachable;
+    defer queue.deinit(std.heap.page_allocator);
 
     try queue.tryEnqueue(1);
     try queue.tryEnqueue(2);
@@ -99,8 +105,8 @@ test "single threaded" {
 }
 
 test "1 producer, 1 consumer" {
-    var buffer = [_]u32{0} ** 4;
-    var queue = Queue(u32).init(buffer[0..]);
+    var queue = Queue(u32).init(std.heap.page_allocator, 4) catch unreachable;
+    defer queue.deinit(std.heap.page_allocator);
 
     const producer = std.Thread.spawn(.{}, producerFn, .{ &queue, 1024 }) catch unreachable;
     const consumer = std.Thread.spawn(.{}, consumerFn, .{ &queue, 1024, 1 }) catch unreachable;
@@ -112,8 +118,8 @@ test "1 producer, 1 consumer" {
 }
 
 test "1 producer, 16 consumers" {
-    var buffer = [_]u32{0} ** 4;
-    var queue = Queue(u32).init(buffer[0..]);
+    var queue = Queue(u32).init(std.heap.page_allocator, 4) catch unreachable;
+    defer queue.deinit(std.heap.page_allocator);
 
     const producer = std.Thread.spawn(.{}, producerFn, .{ &queue, 1024 }) catch unreachable;
     var consumers: [16]std.Thread = undefined;
