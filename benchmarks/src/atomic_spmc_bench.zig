@@ -2,8 +2,8 @@ const std = @import("std");
 const core = @import("core");
 const Queue = core.SPMC.Atomic(u64);
 
-/// BENCHMARK CONFIG
-const TOTAL_ITEMS: usize = 10_000_000;
+// config
+const TOTAL_ITEMS: usize = 100_000_000;
 
 const BenchState = struct {
     queue: *Queue,
@@ -51,7 +51,6 @@ fn producerThread(state: *BenchState) void {
     state.producer_done.store(true, .release);
 }
 
-/// SINGLE BENCH RUN
 fn runBenchmark(
     allocator: std.mem.Allocator,
     consumer_count: usize,
@@ -106,13 +105,43 @@ fn runBenchmark(
     const throughput =
         @as(f64, @floatFromInt(TOTAL_ITEMS)) / seconds;
 
+    const throughputStr = try formatWithCommasAlloc(std.heap.page_allocator, throughput);
+
     std.debug.print(
-        "time: {d:.3}s\nthroughput: {d:.2} ops/sec\n",
-        .{ seconds, throughput },
+        "time: {d:.3}s\nthroughput: {s} ops/sec\n",
+        .{ seconds, throughputStr },
     );
 }
 
-/// MAIN
+fn formatWithCommasAlloc(
+    allocator: std.mem.Allocator,
+    value: anytype,
+) ![]u8 {
+    const T = @TypeOf(value);
+    comptime {
+        const info = @typeInfo(T);
+        switch (info) {
+            .int, .float, .comptime_int, .comptime_float => {},
+            else => @compileError("Unsupported type for formatting"),
+        }
+    }
+
+    const original = try std.fmt.allocPrint(allocator, "{d:.0}", .{value});
+    defer allocator.free(original);
+    var with_commas = try allocator.alloc(u8, original.len + @divFloor(original.len, 3));
+
+    var comma_count: usize = 0;
+    for (0..original.len) |i| {
+        with_commas[i + comma_count] = original[i];
+        if ((original.len - i - 1) % 3 == 0 and i != original.len - 1) {
+            comma_count += 1;
+            with_commas[i + comma_count] = ',';
+        }
+    }
+
+    return with_commas;
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();

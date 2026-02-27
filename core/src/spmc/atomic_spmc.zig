@@ -16,11 +16,22 @@ pub fn Queue(comptime T: type) type {
         const Self = @This();
         const CellT = Cell(T);
 
+        count: usize,
         buffer: []CellT,
-        head: std.atomic.Value(usize) = .init(0),
-        tail: std.atomic.Value(usize) = .init(0),
+        head: std.atomic.Value(usize) align(64) = .init(0),
+        tail: std.atomic.Value(usize) align(64) = .init(0),
 
-        pub fn init(allocator: std.mem.Allocator, count: usize) !Self {
+        pub fn init(allocator: std.mem.Allocator, comptime count: usize) !Self {
+            comptime {
+                if (count <= 0) {
+                    @compileError("Queue capacity must be greater than 0");
+                }
+
+                if ((count & (count - 1)) != 0) {
+                    @compileError("Queue capacity must be a power of 2");
+                }
+            }
+
             const buffer = try allocator.alloc(CellT, count);
 
             for (buffer, 0..) |*slot, i| {
@@ -28,6 +39,7 @@ pub fn Queue(comptime T: type) type {
             }
 
             return Self{
+                .count = count,
                 .buffer = buffer,
             };
         }
@@ -38,7 +50,7 @@ pub fn Queue(comptime T: type) type {
 
         pub fn tryEnqueue(self: *Self, value: T) QueueErrors!void {
             const head = self.head.load(.monotonic);
-            const slot = &self.buffer[head % self.buffer.len];
+            const slot = &self.buffer[head & (self.count - 1)];
 
             const seq = slot.sequence.load(.acquire);
             const diff = @as(isize, @intCast(seq)) - @as(isize, @intCast(head));
@@ -58,7 +70,7 @@ pub fn Queue(comptime T: type) type {
         pub fn tryDequeue(self: *Self) ?T {
             while (true) { // loops until empty or successful pop
                 const tail = self.tail.load(.acquire);
-                const slot = &self.buffer[tail % self.buffer.len];
+                const slot = &self.buffer[tail & (self.count - 1)];
 
                 const seq = slot.sequence.load(.acquire);
 
@@ -95,7 +107,7 @@ pub fn Queue(comptime T: type) type {
 
         pub fn isEmpty(self: *Self) bool {
             const tail = self.tail.load(.acquire);
-            const slot = &self.buffer[tail % self.buffer.len];
+            const slot = &self.buffer[tail & (self.count - 1)];
 
             const seq = slot.sequence.load(.acquire);
             const diff = @as(isize, @intCast(seq)) - @as(isize, @intCast(tail + 1));
@@ -105,7 +117,7 @@ pub fn Queue(comptime T: type) type {
 
         pub fn isFull(self: *Self) bool {
             const head = self.head.load(.acquire);
-            const slot = &self.buffer[head % self.buffer.len];
+            const slot = &self.buffer[head & (self.count - 1)];
 
             const seq = slot.sequence.load(.acquire);
             const diff = @as(isize, @intCast(seq)) - @as(isize, @intCast(head));
