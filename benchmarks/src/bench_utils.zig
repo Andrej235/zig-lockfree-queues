@@ -176,7 +176,13 @@ pub fn formatWithCommasAlloc(
 
     const original = try std.fmt.allocPrint(allocator, "{d:.0}", .{value});
     defer allocator.free(original);
-    var with_commas = try allocator.alloc(u8, original.len + @divFloor(original.len, 3));
+
+    var len_with_commas = original.len + @divFloor(original.len, 3);
+    if (original.len % 3 == 0) {
+        len_with_commas -= 1; // no leading comma if length is multiple of 3
+    }
+
+    var with_commas = try allocator.alloc(u8, len_with_commas);
 
     var comma_count: usize = 0;
     for (0..original.len) |i| {
