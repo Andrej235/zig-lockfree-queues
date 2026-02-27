@@ -1,6 +1,8 @@
 const std = @import("std");
 
 pub fn Bench(comptime TQueue: type, comptime total_items: usize, comptime label: @Type(.enum_literal)) type {
+    const total_items_float = comptime @as(f64, @floatFromInt(total_items));
+
     comptime {
         if (@typeInfo(TQueue) != .@"struct") {
             @compileError("Queue must be a struct");
@@ -89,14 +91,47 @@ pub fn Bench(comptime TQueue: type, comptime total_items: usize, comptime label:
             state.producer_done.store(true, .release);
         }
 
+        fn progressThread(state: *State) !void {
+            var buffer: [128]u8 = undefined;
+            var std_out = std.fs.File.stdout().writer(buffer[0..]);
+            var writer = &std_out.interface;
+            const width = 40;
+
+            while (!state.producer_done.load(.acquire)) {
+                const produced = state.produced.load(.acquire);
+                const percent: usize = @intFromFloat(@floor(@as(f64, @floatFromInt(produced)) / total_items_float * 100.0));
+                const filled = percent * width / 100;
+
+                try writer.writeAll("\r[");
+                for (0..width) |i| {
+                    if (i < filled)
+                        try writer.writeByte('#')
+                    else
+                        try writer.writeByte('-');
+                }
+
+                try writer.print("] {d}%", .{percent});
+                try writer.flush();
+                std.Thread.sleep(50 * std.time.ns_per_ms);
+            }
+            
+            // clear progress line
+            try writer.writeAll("\r[");
+            for (0..width) |_| {
+                try writer.writeByte('#');
+            }
+            try writer.print("] 100%\n", .{});
+            try writer.flush();
+        }
+
         pub fn run(
             allocator: std.mem.Allocator,
             consumer_count: usize,
             producer_count: usize,
         ) !void {
             std.debug.print(
-                "\n--- Benchmark: {} with {} consumers and {} producers ---\n",
-                .{ label, consumer_count, producer_count },
+                "\n--- {s} ({} consumers, {} producers) ---\n",
+                .{ @tagName(label), consumer_count, producer_count },
             );
 
             var queue = try TQueue.init(allocator, 64);
@@ -133,6 +168,8 @@ pub fn Bench(comptime TQueue: type, comptime total_items: usize, comptime label:
 
             state.start_flag.store(true, .release);
 
+            const progress_thread = try std.Thread.spawn(.{}, progressThread, .{&state});
+
             for (producers) |*t| {
                 t.join();
             }
@@ -142,6 +179,7 @@ pub fn Bench(comptime TQueue: type, comptime total_items: usize, comptime label:
             }
 
             const end = std.time.nanoTimestamp();
+            progress_thread.join();
 
             const elapsed_ns: u64 = @intCast(end - start);
 
