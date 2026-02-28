@@ -3,7 +3,7 @@ const core = @import("core");
 const Queue = core.SPMC.Mutex(u64);
 
 // config
-const TOTAL_ITEMS: usize = 10_000_000;
+const TOTAL_ITEMS: usize = 100_000_000;
 const Bench = @import("bench_utils.zig").Bench(Queue, TOTAL_ITEMS, .mutex_spmc);
 
 pub fn main() !void {

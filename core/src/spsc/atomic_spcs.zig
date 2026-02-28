@@ -7,13 +7,9 @@ pub const QueueErrors = error{
 pub fn Queue(comptime T: type) type {
     return struct {
         const Self = @This();
-        const CellT = struct {
-            data: T,
-            sequence: std.atomic.Value(usize) = .init(0),
-        };
 
         count: usize,
-        buffer: []CellT,
+        buffer: []T,
         head: std.atomic.Value(usize) align(64) = .init(0),
         tail: std.atomic.Value(usize) align(64) = .init(0),
 
@@ -28,11 +24,7 @@ pub fn Queue(comptime T: type) type {
                 }
             }
 
-            const buffer = try allocator.alloc(CellT, count);
-
-            for (buffer, 0..) |*slot, i| {
-                slot.sequence = .init(i);
-            }
+            const buffer = try allocator.alloc(T, count);
 
             return Self{
                 .count = count,
@@ -46,79 +38,33 @@ pub fn Queue(comptime T: type) type {
 
         pub fn tryEnqueue(self: *Self, value: T) QueueErrors!void {
             const head = self.head.load(.monotonic);
-            const slot = &self.buffer[head & (self.count - 1)];
-
-            const seq = slot.sequence.load(.acquire);
-            const diff = @as(isize, @intCast(seq)) - @as(isize, @intCast(head));
 
             // queue full
-            if (diff != 0)
+            if (self.tail.load(.acquire) + self.count == head)
                 return QueueErrors.QueueFull;
 
-            slot.data = value;
-
-            // publish item
-            slot.sequence.store(head + 1, .release);
-
-            self.head.store(head + 1, .monotonic);
+            self.buffer[head & (self.count - 1)] = value;
+            self.head.store(head + 1, .release);
         }
 
         pub fn tryDequeue(self: *Self) ?T {
-            while (true) { // loops until empty or successful pop
-                const tail = self.tail.load(.acquire);
-                const slot = &self.buffer[tail & (self.count - 1)];
+            const tail = self.tail.load(.monotonic);
 
-                const seq = slot.sequence.load(.acquire);
+            // queue empty
+            if (self.head.load(.acquire) == tail)
+                return null;
 
-                const diff =
-                    @as(isize, @intCast(seq)) -
-                    @as(isize, @intCast(tail + 1));
-
-                // queue empty
-                if (diff < 0)
-                    return null;
-
-                // another consumer progressed
-                if (diff > 0)
-                    continue;
-
-                // try to claim this index
-                if (self.tail.cmpxchgWeak(
-                    tail,
-                    tail + 1,
-                    .acq_rel,
-                    .acquire,
-                ) == null) {
-                    const value = slot.data;
-
-                    // mark slot reusable
-                    slot.sequence.store(tail + self.buffer.len, .release);
-
-                    return value;
-                }
-
-                // CAS failed, another consumer won -> retry
-            }
+            const value = self.buffer[tail & (self.count - 1)];
+            self.tail.store(tail + 1, .release);
+            return value;
         }
 
         pub fn isEmpty(self: *Self) bool {
-            const tail = self.tail.load(.acquire);
-            const slot = &self.buffer[tail & (self.count - 1)];
-
-            const seq = slot.sequence.load(.acquire);
-            const diff = @as(isize, @intCast(seq)) - @as(isize, @intCast(tail + 1));
-
-            return diff < 0;
+            return self.head.load(.acquire) == self.tail.load(.acquire);
         }
 
         pub fn isFull(self: *Self) bool {
-            const head = self.head.load(.acquire);
-            const slot = &self.buffer[head & (self.count - 1)];
-
-            const seq = slot.sequence.load(.acquire);
-            const diff = @as(isize, @intCast(seq)) - @as(isize, @intCast(head));
-
-            return diff != 0;
+            return self.tail.load(.acquire) + self.count == self.head.load(.acquire);
         }
     };
 }
@@ -153,24 +99,6 @@ test "1 producer, 1 consumer" {
 
     producer.join();
     consumer.join();
-
-    try testing.expectEqual(true, queue.isEmpty());
-}
-
-test "1 producer, 16 consumers" {
-    var queue = Queue(u32).init(std.heap.page_allocator, 4) catch unreachable;
-    defer queue.deinit(std.heap.page_allocator);
-
-    const producer = std.Thread.spawn(.{}, producerFn, .{ &queue, 1024 }) catch unreachable;
-    var consumers: [16]std.Thread = undefined;
-    for (0..16) |i| {
-        consumers[i] = std.Thread.spawn(.{}, consumerFn, .{ &queue, 1024, 16 }) catch unreachable;
-    }
-
-    producer.join();
-    for (consumers) |consumer| {
-        consumer.join();
-    }
 
     try testing.expectEqual(true, queue.isEmpty());
 }
